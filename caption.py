@@ -205,9 +205,10 @@ def visualize_att(image_path, seq, alphas, rev_word_map, path, smooth=True):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Image_Captioning')
-    parser.add_argument('--img', '-i', default="./dataset/val2014/COCO_val2014_000000581886.jpg", help='path to image, file or folder')
+    # parser.add_argument('--img', '-i', default="./dataset/val2014/COCO_val2014_000000581886.jpg", help='path to image, file or folder')
+    parser.add_argument('--img', '-i', default="./dataset/flickr30k_images/COCO_val2014_000000581886.jpg", help='path to image, file or folder')
     parser.add_argument('--checkpoint', '-m', default="./BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar", help='path to model')
-    parser.add_argument('--word_map', '-wm', default="./dataset/generated_data/WORDMAP_coco_5_cap_per_img_5_min_word_freq.json",
+    parser.add_argument('--word_map', '-wm', default="./dataset/generated_data/WORDMAP_flickr30k_5_cap_per_img_5_min_word_freq.json",
                         help='path to word map JSON')
     parser.add_argument('--decoder_mode', default="transformer", help='which model does decoder use?')  # lstm or transformer
     parser.add_argument('--save_img_dir', '-p', default="./caption", help='path to save annotated img.')

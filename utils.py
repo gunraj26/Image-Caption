@@ -218,8 +218,9 @@ def clip_gradient(optimizer, grad_clip):
                 param.grad.data.clamp_(-grad_clip, grad_clip)
 
 
-def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder, encoder_optimizer, decoder_optimizer,
-                    metrics, is_best, final_args):
+def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder,
+                    encoder_optimizer, decoder_optimizer, metrics, is_best, final_args,
+                    save_dir="."):
     """
     Saves model checkpoint.
 
@@ -233,19 +234,32 @@ def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder
     :param bleu4: validation BLEU-4 score for this epoch
     :param is_best: is this checkpoint the best so far?
     """
-    state = {'epoch': epoch,
-             'epochs_since_improvement': epochs_since_improvement,
-             'metrics': metrics,
-             'encoder': encoder,
-             'decoder': decoder,
-             'encoder_optimizer': encoder_optimizer,
-             'decoder_optimizer': decoder_optimizer,
-             'final_args': final_args}
-    filename = 'checkpoint_' + data_name + '.pth.tar'
-    torch.save(state, filename)
-    # If this checkpoint is the best so far, store a copy so it doesn't get overwritten by a worse checkpoint
+    os.makedirs(save_dir, exist_ok=True)
+    filename = os.path.join(save_dir, f"checkpoint_{data_name}.pth.tar")
+
+    state = {
+        "epoch": epoch,
+        "epochs_since_improvement": epochs_since_improvement,
+        "metrics": metrics,
+        "final_args": final_args,
+        "encoder_state_dict": encoder.state_dict(),
+        "decoder_state_dict": decoder.state_dict(),
+        "encoder_optimizer_state_dict": encoder_optimizer.state_dict() if encoder_optimizer else None,
+        "decoder_optimizer_state_dict": decoder_optimizer.state_dict(),
+    }
+
+    tmp = filename + ".tmp"
+    torch.save(state, tmp, _use_new_zipfile_serialization=False)         # write atomically
+    os.replace(tmp, filename)
+
     if is_best:
-        torch.save(state, 'BEST_' + filename)
+        best_filename = os.path.join(save_dir, f"BEST_checkpoint_{data_name}.pth.tar")
+        # BEST: skip optimizer states to save space
+        best_state = {k: v for k, v in state.items() if "optimizer" not in k}
+        tmpb = best_filename + ".tmp"
+        torch.save(best_state, tmpb, _use_new_zipfile_serialization=False)
+        os.replace(tmpb, best_filename)
+
 
 
 class AverageMeter(object):

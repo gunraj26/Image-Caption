@@ -8,3 +8,12 @@ __pycache__/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+dataset
+venv
+
+nohup.out
+
+BEST_checkpoint_flickr30k_5_cap_per_img_5_min_word_freq.pth.tar
+checkpoint_flickr30k_5_cap_per_img_5_min_word_freq.pth.tar
+

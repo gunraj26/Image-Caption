@@ -187,7 +187,7 @@ def validate(args, val_loader, encoder, decoder, criterion):
             # references = [[ref1a, ref1b, ref1c], [ref2a, ref2b], ...], hypotheses = [hyp1, hyp2, ...]
 
             # References
-            allcaps = allcaps[sort_ind]  # because images were sorted in the decoder
+            allcaps = allcaps[sort_ind.cpu()]  # because images were sorted in the decoder
             for j in range(allcaps.shape[0]):
                 img_caps = allcaps[j].tolist()
                 img_captions = list(
@@ -231,7 +231,7 @@ if __name__ == '__main__':
     # Data parameters
     parser.add_argument('--data_folder', default="./dataset/generated_data",
                         help='folder with data files saved by create_input_files.py.')
-    parser.add_argument('--data_name', default="coco_5_cap_per_img_5_min_word_freq",
+    parser.add_argument('--data_name', default="flickr30k_5_cap_per_img_5_min_word_freq",
                         help='base name shared by data files.')
     # Model parameters
     parser.add_argument('--emb_dim', type=int, default=300, help='dimension of word embeddings.')
