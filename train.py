@@ -361,7 +361,7 @@ if __name__ == '__main__':
     print(decoder)
 
     # Loss function
-    criterion = nn.CrossEntropyLoss.to(device)
+    criterion = nn.CrossEntropyLoss().to(device)
 
     # Custom dataloaders
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
