@@ -10,6 +10,7 @@ from nltk.translate.bleu_score import corpus_bleu
 import torch.nn.functional as F
 from tqdm import tqdm
 import argparse
+import numpy as np
 # import transformer, models
 
 
@@ -94,7 +95,7 @@ def evaluate_lstm(args):
                 if len(complete_inds) > 0:
                     Caption_End = True
                     complete_seqs.extend(seqs[complete_inds].tolist())
-                    complete_seqs_scores.extend(top_k_scores[complete_inds])
+                    complete_seqs_scores.extend(top_k_scores[complete_inds].detach().cpu().view(-1).tolist())
                 k -= len(complete_inds)  # reduce beam length accordingly
                 # Proceed with incomplete sequences
                 if k == 0:
@@ -207,7 +208,7 @@ def evaluate_transformer(args):
                 if len(complete_inds) > 0:
                     Caption_End = True
                     complete_seqs.extend(seqs[complete_inds].tolist())
-                    complete_seqs_scores.extend(top_k_scores[complete_inds])
+                    complete_seqs_scores.extend(top_k_scores[complete_inds].detach().cpu().view(-1).tolist())
                 k -= len(complete_inds)  # reduce beam length accordingly
                 # Proceed with incomplete sequences
                 if k == 0:
@@ -227,8 +228,12 @@ def evaluate_transformer(args):
 
             # choose the caption which has the best_score.
             assert Caption_End
-            indices = complete_seqs_scores.index(max(complete_seqs_scores))
-            seq = complete_seqs[indices]
+            if len(complete_seqs_scores) > 0:
+                best_idx = int(np.argmax(complete_seqs_scores))
+                seq = complete_seqs[best_idx]
+            else:
+                best_idx = int(torch.argmax(top_k_scores).item())
+                seq = seqs[best_idx].tolist()
             # References
             img_caps = allcaps[0].tolist()
             img_captions = list(
@@ -260,49 +265,103 @@ def evaluate_transformer(args):
 
 
 if __name__ == '__main__':
+    import os, json
+    import torch
+    import torch.backends.cudnn as cudnn
+    import torchvision.transforms as transforms
+    from models import CNN_Encoder, DecoderWithAttention
+    from transformer import Transformer
+
     parser = argparse.ArgumentParser(description='Image_Captioning')
     parser.add_argument('--data_folder', default="./dataset/generated_data",
                         help='folder with data files saved by create_input_files.py.')
-    parser.add_argument('--data_name', default="coco_5_cap_per_img_5_min_word_freq",
+    parser.add_argument('--data_name', default="flickr30k_5_cap_per_img_5_min_word_freq",
                         help='base name shared by data files.')
     parser.add_argument('--decoder_mode', default="transformer", help='which model does decoder use?')  # lstm or transformer
     parser.add_argument('--beam_size', type=int, default=3, help='beam_size.')
-    parser.add_argument('--checkpoint', default="./BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar",
+    parser.add_argument('--checkpoint', default="./BEST_checkpoint_flickr30k_5_cap_per_img_5_min_word_freq.pth.tar",
                         help='model checkpoint.')
     args = parser.parse_args()
 
+    # Files & device
     word_map_file = os.path.join(args.data_folder, 'WORDMAP_' + args.data_name + '.json')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # transformer.device = torch.device("cpu")
-    # models.device = torch.device("cpu")
-    cudnn.benchmark = True  # set to true only if inputs to model are fixed size; otherwise lot of computational overhead
+    cudnn.benchmark = True
     print(device)
 
-    # Load model
-    checkpoint = torch.load(args.checkpoint, map_location=str(device))
-    decoder = checkpoint['decoder']
-    decoder = decoder.to(device)
-    decoder.eval()
-    encoder = checkpoint['encoder']
-    encoder = encoder.to(device)
-    encoder.eval()
-    # print(encoder)
-    # print(decoder)
-
-    # Load word map (word2id)
+    # Load word map first (we need vocab size to rebuild models if loading state_dicts)
     with open(word_map_file, 'r') as j:
         word_map = json.load(j)
     vocab_size = len(word_map)
-    rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
+    rev_word_map = {v: k for k, v in word_map.items()}
 
-    # Normalization transform
+    # ---- Load checkpoint (supports standardized state-dict OR legacy whole-module) ----
+    try:
+        ckpt = torch.load(args.checkpoint, map_location=torch.device(device))  # default safe loader (PyTorch 2.6+)
+    except Exception:
+        # Fallback for old pickled modules if the file is legacy and safe loader blocks it
+        ckpt = torch.load(args.checkpoint, map_location=torch.device(device), weights_only=False)
+
+    # Build models and load weights
+    if 'encoder_state_dict' in ckpt and 'decoder_state_dict' in ckpt:
+        # standardized format
+        fa = ckpt.get('final_args', {})
+        attention_method = fa.get('attention_method', 'ByPixel')
+        emb_dim        = fa.get('emb_dim', 300)
+        encoder_layers = fa.get('encoder_layers', 2)
+        decoder_layers = fa.get('decoder_layers', 6)
+        dropout        = fa.get('dropout', 0.1)
+        n_heads        = fa.get('n_heads', 8)
+
+        encoder = CNN_Encoder(attention_method=attention_method).to(device)
+
+        if args.decoder_mode == 'transformer':
+            decoder = Transformer(
+                vocab_size=vocab_size,
+                embed_dim=emb_dim,
+                encoder_layers=encoder_layers,
+                decoder_layers=decoder_layers,
+                dropout=dropout,
+                attention_method=attention_method,
+                n_heads=n_heads,
+            ).to(device)
+        else:
+            decoder = DecoderWithAttention(
+                attention_dim=512,
+                embed_dim=emb_dim,
+                decoder_dim=512,
+                vocab_size=vocab_size,
+                dropout=dropout,
+            ).to(device)
+
+        encoder.load_state_dict(ckpt['encoder_state_dict'])
+        decoder.load_state_dict(ckpt['decoder_state_dict'])
+
+    elif 'encoder' in ckpt and 'decoder' in ckpt:
+        # legacy format (whole modules saved)
+        # ensure we loaded with weights_only=False above if safe loader complained
+        encoder = ckpt['encoder'].to(device)
+        decoder = ckpt['decoder'].to(device)
+    else:
+        raise KeyError(
+            f"Unexpected checkpoint keys: {list(ckpt.keys())[:10]} ...\n"
+            "Expected either {'encoder_state_dict','decoder_state_dict'} or {'encoder','decoder'}."
+        )
+
+    encoder.eval()
+    decoder.eval()
+
+    # Normalization transform used by the DataLoader in evaluate_*
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
+
+    # Run evaluation
     if args.decoder_mode == "lstm":
         metrics = evaluate_lstm(args)
     elif args.decoder_mode == "transformer":
         metrics = evaluate_transformer(args)
 
-    print("{} - beam size {}: BLEU-1 {} BLEU-2 {} BLEU-3 {} BLEU-4 {} METEOR {} ROUGE_L {} CIDEr {}".format
-          (args.decoder_mode, args.beam_size, metrics["Bleu_1"],  metrics["Bleu_2"],  metrics["Bleu_3"],  metrics["Bleu_4"],
-           metrics["METEOR"], metrics["ROUGE_L"], metrics["CIDEr"]))
+    print("{} - beam size {}: BLEU-1 {} BLEU-2 {} BLEU-3 {} BLEU-4 {} METEOR {} ROUGE_L {} CIDEr {}".format(
+        args.decoder_mode, args.beam_size,
+        metrics["Bleu_1"], metrics["Bleu_2"], metrics["Bleu_3"], metrics["Bleu_4"],
+        metrics["METEOR"], metrics["ROUGE_L"], metrics["CIDEr"]))

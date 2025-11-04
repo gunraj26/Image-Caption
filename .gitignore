@@ -16,4 +16,10 @@ nohup.out
 
 BEST_checkpoint_flickr30k_5_cap_per_img_5_min_word_freq.pth.tar
 checkpoint_flickr30k_5_cap_per_img_5_min_word_freq.pth.tar
+BEST_checkpoint_standardized.pth.tar
 
+nohup.out
+nohup_train.out
+nohup_eval.out
+
+caption

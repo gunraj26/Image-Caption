@@ -180,11 +180,14 @@ def visualize_att(image_path, seq, alphas, rev_word_map, path, smooth=True):
     words = [rev_word_map[ind] for ind in seq]
     print(words)
 
+    rows = (len(words) + 4) // 5   # ceil(len(words)/5) but integer-safe
+    plt.figure(figsize=(15, 3 * rows))
+
     for t in range(len(words)):
         if t > 50:
             break
-        plt.subplot(np.ceil(len(words) / 5.), 5, t + 1)
-
+        plt.subplot(rows, 5, t + 1)
+        
         plt.text(0, 1, '%s' % (words[t]), color='black', backgroundcolor='white', fontsize=12)
         plt.imshow(image)
         current_alpha = alphas[t, :]
@@ -204,6 +207,11 @@ def visualize_att(image_path, seq, alphas, rev_word_map, path, smooth=True):
 
 
 if __name__ == '__main__':
+    import os, time, json
+    import torch
+    from models import CNN_Encoder, DecoderWithAttention
+    from transformer import Transformer
+
     parser = argparse.ArgumentParser(description='Image_Captioning')
     # parser.add_argument('--img', '-i', default="./dataset/val2014/COCO_val2014_000000581886.jpg", help='path to image, file or folder')
     parser.add_argument('--img', '-i', default="./dataset/flickr30k_images/COCO_val2014_000000581886.jpg", help='path to image, file or folder')
@@ -217,48 +225,86 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # transformer.device = torch.device("cpu")
-    # models.device = torch.device("cpu")
     print(device)
 
-    # Load model
-    checkpoint = torch.load(args.checkpoint, map_location=str(device))
-    decoder = checkpoint['decoder']
-    decoder = decoder.to(device)
-    decoder.eval()
-    encoder = checkpoint['encoder']
-    encoder = encoder.to(device)
-    encoder.eval()
-    # print(encoder)
-    # print(decoder)
-
-    # Load word map (word2ix)
+    # ---- Load word map first (needed to build decoder with correct vocab size) ----
     with open(args.word_map, 'r') as j:
         word_map = json.load(j)
-    rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
+    rev_word_map = {v: k for k, v in word_map.items()}
+    vocab_size = len(word_map)
 
-    # Encode, decode with attention and beam search
+    # ---- Robust checkpoint load: supports standardized (state_dict) and legacy (whole modules) ----
+    try:
+        ckpt = torch.load(args.checkpoint, map_location=torch.device(device))
+    except Exception:
+        ckpt = torch.load(args.checkpoint, map_location=torch.device(device), weights_only=False)
+
+    if 'encoder_state_dict' in ckpt and 'decoder_state_dict' in ckpt:
+        fa = ckpt.get('final_args', {})
+        attention_method = fa.get('attention_method', 'ByPixel')
+        emb_dim        = fa.get('emb_dim', 300)
+        encoder_layers = fa.get('encoder_layers', 2)
+        decoder_layers = fa.get('decoder_layers', 6)
+        dropout        = fa.get('dropout', 0.1)
+        n_heads        = fa.get('n_heads', 8)
+
+        encoder = CNN_Encoder(attention_method=attention_method).to(device)
+
+        if args.decoder_mode == 'transformer':
+            decoder = Transformer(
+                vocab_size=vocab_size,
+                embed_dim=emb_dim,
+                encoder_layers=encoder_layers,
+                decoder_layers=decoder_layers,
+                dropout=dropout,
+                attention_method=attention_method,
+                n_heads=n_heads,
+            ).to(device)
+        else:
+            decoder = DecoderWithAttention(
+                attention_dim=512,
+                embed_dim=emb_dim,
+                decoder_dim=512,
+                vocab_size=vocab_size,
+                dropout=dropout,
+            ).to(device)
+
+        encoder.load_state_dict(ckpt['encoder_state_dict'])
+        decoder.load_state_dict(ckpt['decoder_state_dict'])
+
+    elif 'encoder' in ckpt and 'decoder' in ckpt:
+        # legacy whole-modules
+        encoder = ckpt['encoder'].to(device)
+        decoder = ckpt['decoder'].to(device)
+    else:
+        raise KeyError(
+            f"Unexpected checkpoint keys: {list(ckpt.keys())[:10]} ...\n"
+            "Expected either {'encoder_state_dict','decoder_state_dict'} or {'encoder','decoder'}."
+        )
+
+    encoder.eval()
+    decoder.eval()
+
+    # ---- Caption one file or a folder ----
     if os.path.isdir(args.img):
         for file in os.listdir(args.img):
             file = os.path.join(args.img, file)
+            if not os.path.isfile(file):
+                continue
             with torch.no_grad():
                 seq, alphas = caption_image_beam_search(args, encoder, decoder, file, word_map)
                 alphas = torch.FloatTensor(alphas)
 
-            if not (os.path.exists(args.save_img_dir) and os.path.isdir(args.save_img_dir)):
-                os.makedirs(args.save_img_dir)
+            os.makedirs(args.save_img_dir, exist_ok=True)
             timestamp = str(int(time.time()))
-            path = args.save_img_dir + "/" + timestamp + ".png"
-            # Visualize caption and attention of best sequence
+            path = os.path.join(args.save_img_dir, f"{timestamp}.png")
             visualize_att(file, seq, alphas, rev_word_map, path, args.smooth)
     else:
         with torch.no_grad():
             seq, alphas = caption_image_beam_search(args, encoder, decoder, args.img, word_map)
             alphas = torch.FloatTensor(alphas)
 
-        if not (os.path.exists(args.save_img_dir) and os.path.isdir(args.save_img_dir)):
-            os.makedirs(args.save_img_dir)
+        os.makedirs(args.save_img_dir, exist_ok=True)
         timestamp = str(int(time.time()))
-        path = args.save_img_dir + "/" + timestamp + ".png"
-        # Visualize caption and attention of best sequence
+        path = os.path.join(args.save_img_dir, f"{timestamp}.png")
         visualize_att(args.img, seq, alphas, rev_word_map, path, args.smooth)
