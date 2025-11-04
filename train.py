@@ -303,7 +303,7 @@ if __name__ == '__main__':
                                   attention_method=args.attention_method, n_heads=args.n_heads)
 
         decoder_optimizer = torch.optim.Adam(params=filter(lambda p: p.requires_grad, decoder.parameters()),
-                                             lr=args.decoder_lr, weight_decay=1e-4)
+                                             lr=args.decoder_lr)
 
         # load pre-trained word embedding
         if args.embedding_path is not None:
@@ -361,7 +361,7 @@ if __name__ == '__main__':
     print(decoder)
 
     # Loss function
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
+    criterion = nn.CrossEntropyLoss.to(device)
 
     # Custom dataloaders
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])

@@ -20,6 +20,7 @@ BEST_checkpoint_standardized.pth.tar
 
 nohup.out
 nohup_train.out
+nohup_train2_6_6.out
 nohup_eval.out
 
 caption
